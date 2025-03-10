@@ -9,5 +9,7 @@ python -u main.py \
     --bitwidth 6 \
     --calib_t_mode diff \
     --batch_size 1 \
+    --calibrate_attention \
+    --attention_loss_weight 0.5 \
 
 # example - running cifaar10 dataset sampling
