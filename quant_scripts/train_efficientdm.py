@@ -265,5 +265,5 @@ if __name__ == '__main__':
                 image_to_save.save(os.path.join(eval_out_dir, "epoch{}.jpg".format(epoch)))
                 all_samples.clear()
 
-    torch.save(model.state_dict(), 'quantw{}a{}_{}steps_efficientdm.pth'.format(n_bits_w, n_bits_a, ddim_steps))
+    torch.save(model.state_dict(), 'quantw{}a{}_{}steps_efficientdm.pth'.format(n_bits_w, n_bits_a, ddim_steps)))
 
