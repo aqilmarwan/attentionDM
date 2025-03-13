@@ -35,6 +35,50 @@ After generation, you can run the following command to evaluate IS and FID.
 python -m pytorch_fid <dataset path> <image path>
 ```
 
+## Benchmarking
+### GPU = A5000
+
+## Class-conditional Image Generation
+**Dataset:** ImageNet 256 × 256  
+
+| Timesteps | Bit-width (W/A) | Method      | Size (MB) | FID ↓ | sFID ↓ | IS ↑ | Precision ↑ |
+|-----------|----------------|-------------|-----------|-------|--------|------|------------|
+| 250       | 32/32          | FP          |           |       |        |      |            |
+|           | 8/8            | Q-Diffusion |           |       |        |      |            |
+|           |                | PTQD        |           |       |        |      |            |
+|           |                | PTQ4DM      |           |       |        |      |            |
+|           |                | **TinyDM**  |           |       |        |      |            |
+|           | 4/8            | Q-Diffusion |           |       |        |      |            |
+|           |                | PTQD        |           |       |        |      |            |
+|           |                | PTQ4DM      |           |       |        |      |            |
+|           |                | **TinyDM**  |           |       |        |      |            |
+| 50        | 32/32          | FP          |           |       |        |      |            |
+|           | 8/8            | Q-Diffusion |           |       |        |      |            |
+|           |                | PTQD        |           |       |        |      |            |
+|           |                | PTQ4DM      |           |       |        |      |            |
+|           |                | **TinyDM**  |           |       |        |      |            |
+|           | 4/8            | Q-Diffusion |           |       |        |      |            |
+|           |                | PTQD        |           |       |        |      |            |
+|           |                | PTQ4DM      |           |       |        |      |            |
+|           |                | **TinyDM**  |           |       |        |      |            |
+
+---
+
+## Unconditional Image Generation
+**Dataset:** LSUN-Bedrooms 256 × 256 LDM4  
+
+| Timesteps | Bit-width (W/A) | Method      | Size (MB) | FID ↓ | sFID ↓ | IS ↑ | Precision ↑ |
+|-----------|----------------|-------------|-----------|-------|--------|------|------------|
+| 250       | 32/32          | FP          | 🔲        | 🔲    | 🔲      | 🔲   | 🔲         |
+|           | 8/8            | Q-Diffusion | 🔲        | 🔲    | 🔲      | 🔲   | 🔲         |
+|           |                | PTQD        | 🔲        | 🔲    | 🔲      | 🔲   | 🔲         |
+|           |                | PTQ4DM      | 🔲        | 🔲    | 🔲      | 🔲   | 🔲         |
+|           |                | **TinyDM**  | 🔲        | 🔲    | 🔲      | 🔲   | 🔲         |
+|           | 4/8            | Q-Diffusion | 🔲        | 🔲    | 🔲      | 🔲   | 🔲         |
+|           |                | PTQD        | 🔲        | 🔲    | 🔲      | 🔲   | 🔲         |
+|           |                | PTQ4DM      | 🔲        | 🔲    | 🔲      | 🔲   | 🔲         |
+|           |                | **TinyDM**  | 🔲        | 🔲    | 🔲      | 🔲   | 🔲         |
+
 ## Acknowledgements
 
 We thank the authors of following works for opening source their excellent codes.
