@@ -1,21 +1,46 @@
-# tinyDM
+# TinyDM
+
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Build Status](https://img.shields.io/github/workflow/status/username/project/main)](https://github.com/username/project/actions)
+[![Coverage Status](https://img.shields.io/codecov/c/github/username/project)](https://codecov.io/gh/username/project)
+[![Version](https://img.shields.io/npm/v/project.svg)](https://www.npmjs.com/package/project)
+
+## Overview
 
 This is a pytorch implementation of the paper "tinyDM: A Tiny and Accurate Diffusion Model for High-Quality Image Generation".
 
-## Quick Start
 
-### Prerequisites
+## Features
+
+- **Key Feature One**: Self Attention mechanism in quantisation.
+When quantizing diffusion models (reducing their precision from 32-bit or 16-bit floating point to lower bit representations eg 8-bit or 4-bit), the challenge is maintaining the complex relationships between features that the model has learned.
+
+- **Key Feature Two**: Channel Wise Balancing Quantisation.
+
+
+## Prerequisites
 
 - python>=3.8
 - pytorch>=1.12.1
 - torchvision>=0.13.0 
 - other packages like numpy, tqdm and math
 
-### Pretrained Models
+## Installation
 
-You can get full-precision pretrained models from [DDIM](https://github.com/ermongroup/ddim) and [DDPM](https://github.com/hojonathanho/diffusion).
+Step-by-step installation instructions:
 
-## Training and Testing
+```bash
+# Clone the repository
+git clone https://github.com/aqilmarwan/tinyDM/edit/main/README.md#:~:text=/-,tinyDM,-Code
+cd tinyDM
+
+# Configure environment variables from LDM
+
+## Usage
+
+### Basic Examples
+
+### Training and Testing
 
 The following experiments were performed in NVIDIA A500 with 24GB memory.
 
@@ -35,8 +60,9 @@ After generation, you can run the following command to evaluate IS and FID.
 python -m pytorch_fid <dataset path> <image path>
 ```
 
-## Benchmarking
-## GPU = A5000
+## Performance
+
+# GPU = A5000
 
 ## Class-conditional Image Generation
 **Dataset:** ImageNet 256 × 256  
@@ -80,9 +106,27 @@ python -m pytorch_fid <dataset path> <image path>
 |           |                | **`TinyDM`**  |           |       |        |      |            |
 
 
-## Acknowledgements
+## Roadmap
+Current state of the project:
 
-We thank the authors of following works for opening source their excellent codes.
+- [x] Results on state of the conditional. (current)
+- [x] Results on un-conditional image benchmarking. (current)
+- [x] Self attention mechanism in PTQ diffusion models
+- [x] Dissertation writing of 3401 words.
+
+Future possible/uncomplete plans for the project:
+
+- [ ] Explore Channel Wise Balancing Quantisation.
+- [ ] Performance metrics
+  - [ ] Performance w.r.t. different timestep sampling strate- gies for calibration set construction
+  - [ ] Image synthesis/comparison on datasets. (LSUN Church, LSUN Bedroom, CIFAR-10 etc)
+  - [ ] Performance w.r.t Sampling Strategies
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgements
 
 - [DDIM](https://github.com/ermongroup/ddim)
 - [DDPM](https://github.com/hojonathanho/diffusion)
@@ -90,3 +134,6 @@ We thank the authors of following works for opening source their excellent codes
 - [PTQ4DM](https://github.com/42Shawn/PTQ4DM)
 - [Q-diffusion](https://github.com/Xiuyu-Li/q-diffusion)
 - [guided-diffusion](https://github.com/openai/guided-diffusion)
+
+## Contact
+
