@@ -30,13 +30,13 @@ When quantizing diffusion models (reducing their precision from 32-bit or 16-bit
 Step-by-step installation instructions:
 
 
-# Clone the repository
+## Clone the repository
 ```bash
 git clone https://github.com/aqilmarwan/tinyDM.git
 cd tinyDM
 ```
 
-# Configure environment variables from LDM
+## Configure environment variables from LDM
 
 ## Usage
 
