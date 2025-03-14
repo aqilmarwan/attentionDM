@@ -120,7 +120,7 @@ Future possible/uncomplete plans for the project:
 
 - [ ] Explore Channel Wise Balancing Quantisation.
 - [ ] Performance metrics
-  - [ ] Performance w.r.t. different timestep sampling strate- gies for calibration set construction
+  - [ ] Performance w.r.t. different timestep sampling strategies for calibration set construction
   - [ ] Image synthesis/comparison on datasets. (LSUN Church, LSUN Bedroom, CIFAR-10 etc)
   - [ ] Performance w.r.t Sampling Strategies
 
