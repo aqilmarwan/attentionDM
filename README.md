@@ -1,4 +1,4 @@
-# TinyDM
+# Project Name
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Build Status](https://img.shields.io/github/workflow/status/username/project/main)](https://github.com/username/project/actions)
@@ -29,10 +29,12 @@ When quantizing diffusion models (reducing their precision from 32-bit or 16-bit
 
 Step-by-step installation instructions:
 
-```bash
+
 # Clone the repository
+```bash
 git clone https://github.com/aqilmarwan/tinyDM/edit/main/README.md#:~:text=/-,tinyDM,-Code
 cd tinyDM
+```
 
 # Configure environment variables from LDM
 
