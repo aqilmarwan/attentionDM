@@ -32,7 +32,7 @@ Step-by-step installation instructions:
 
 # Clone the repository
 ```bash
-git clone https://github.com/aqilmarwan/tinyDM/edit/main/README.md#:~:text=/-,tinyDM,-Code
+git clone https://github.com/aqilmarwan/tinyDM.git
 cd tinyDM
 ```
 
@@ -64,7 +64,7 @@ python -m pytorch_fid <dataset path> <image path>
 
 ## Performance
 
-# GPU = A5000
+Performance was conducted on NVIDIA A500 with 24GB memory with specified quantisation parameters settings.
 
 ## Class-conditional Image Generation
 **Dataset:** ImageNet 256 × 256  
@@ -136,6 +136,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [PTQ4DM](https://github.com/42Shawn/PTQ4DM)
 - [Q-diffusion](https://github.com/Xiuyu-Li/q-diffusion)
 - [guided-diffusion](https://github.com/openai/guided-diffusion)
-
-## Contact
 
