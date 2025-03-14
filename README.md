@@ -11,11 +11,13 @@ This is a pytorch implementation of the paper "tinyDM: A Tiny and Accurate Diffu
 
 
 ## Features
-
+![image](/Users/aqilmarwanazhar/Desktop/Projects/tinyDM/self-attention.png)
 - **Key Feature One**: Self Attention mechanism in quantisation.
 When quantizing diffusion models (reducing their precision from 32-bit or 16-bit floating point to lower bit representations eg 8-bit or 4-bit), the challenge is maintaining the complex relationships between features that the model has learned.
 
+![image](/Users/aqilmarwanazhar/Desktop/Projects/tinyDM/channel-wise-balancing.png)
 - **Key Feature Two**: Channel Wise Balancing Quantisation.
+ Channel-wise Linear Quantization normally is treated as a baseline for naive PTQ methods. Involves quantizing each channel independently, without considering the inter-channel relationships or analysing the ranges of activation values across all time steps in DDIM on CIFAR-10, LDM on LSUN-Bedroom and LSUN-Church
 
 
 ## Prerequisites
