@@ -31,7 +31,6 @@ class QSelfAttention(nn.Module):
                                       w_bit=args.bitwidth, a_bit=args.bitwidth, 
                                       sequence=sequence, args=args)
         else:
-            # Regular convolution layers
             self.query_conv = nn.Conv2d(in_channels, self.key_channels, kernel_size=1)
             self.key_conv = nn.Conv2d(in_channels, self.key_channels, kernel_size=1)
             self.value_conv = nn.Conv2d(in_channels, self.value_channels, kernel_size=1)
@@ -43,9 +42,7 @@ class QSelfAttention(nn.Module):
     def forward(self, x, t=None):
         batch_size, channels, height, width = x.size()
         
-        # Apply time embedding if provided
         if t is not None:
-            # Simple time embedding - can be enhanced
             t = t.view(-1, 1, 1, 1).repeat(1, 1, height, width)
             x = torch.cat([x, t], dim=1)
         
@@ -72,6 +69,6 @@ class QSelfAttention(nn.Module):
         out = self.output_conv(out)
         
         # Residual connection with learnable weight
-        out = self.gamma * out + x[:, :channels]  # Only use original channels if t was added
+        out = self.gamma * out + x[:, :channels] 
         
         return out
