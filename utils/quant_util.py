@@ -396,6 +396,7 @@ class QConv2d(QModule):
             s += ', half wave' if self.half_wave else ', full wave'
         return s.format(**self.__dict__)
 
+# GroupWise Quantization
 def GroupWise_Quantizaion(x, dim=128, group_n=8, maxmin='max'):
     C = dim
     range_max = x.max()
