@@ -138,4 +138,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [PTQ4DM](https://github.com/42Shawn/PTQ4DM)
 - [Q-diffusion](https://github.com/Xiuyu-Li/q-diffusion)
 - [guided-diffusion](https://github.com/openai/guided-diffusion)
-
+- [Self-Attention-Guidance](https://github.com/SusungHong/Self-Attention-Guidance)
