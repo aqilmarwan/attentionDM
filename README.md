@@ -110,6 +110,8 @@ Performance was conducted on NVIDIA A500 with 24GB memory with specified quantis
 |           |                | **`TinyDM`**  |           |       |        |      |            |
 
 
+## Image Synthesis Generation
+
 ## Roadmap
 Current state of the project:
 
