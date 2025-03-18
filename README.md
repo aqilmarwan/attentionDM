@@ -122,11 +122,13 @@ Current state of the project:
 
 Future possible/uncomplete plans for the project:
 
-- [ ] Explore Channel Wise Balancing Quantisation.
+- [x] Explore Channel Wise Balancing Quantisation.
 - [ ] Performance metrics
-  - [ ] Performance w.r.t. different timestep sampling strategies for calibration set construction
+  - [ ] Quantisation Error Analysis (MSE, MAE, etc)
+  - [ ] Performance w.r.t. different timestep sampling strategies for calibration set construction(time-step selection)
   - [ ] Image synthesis/comparison on datasets. (LSUN Church, LSUN Bedroom, CIFAR-10 etc)
   - [ ] Performance w.r.t Sampling Strategies
+  - [ ] Performance w.r.t. different quantisation methods.
 
 ## License
 
