@@ -124,11 +124,11 @@ Future possible/uncomplete plans for the project:
 
 - [x] Explore Channel Wise Balancing Quantisation.
 - [ ] Performance metrics
-  - [ ] Quantisation Error Analysis (MSE, MAE, etc)
-  - [ ] Performance w.r.t. different timestep sampling strategies for calibration set construction(time-step selection)
+  - [ ] Performance w.r.t. the number of timestep groups
+  - [ ] Performance w.r.t. different timestep sampling strategies for calibration set construction
+  - [ ] Visualization of importance weight in differentiable search
+  - [ ] Performance w.r.t. hyper-parameters λ and η:
   - [ ] Image synthesis/comparison on datasets. (LSUN Church, LSUN Bedroom, CIFAR-10 etc)
-  - [ ] Performance w.r.t Sampling Strategies
-  - [ ] Performance w.r.t. different quantisation methods.
 
 ## License
 
