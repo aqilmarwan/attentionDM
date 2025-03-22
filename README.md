@@ -7,7 +7,7 @@
 
 ## Overview
 
-This is a pytorch implementation of the paper "tinyDM: A Tiny and Accurate Diffusion Model for High-Quality Image Generation".
+This is a pytorch implementation of the paper "attentionDM: A Tiny and Accurate implementation of Post Training Quantisation with Self-attention on Diffusion Models".
 
 
 ## Features
