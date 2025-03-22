@@ -1,4 +1,4 @@
-# TinyDM
+# AttentionDM
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Build Status](https://img.shields.io/github/workflow/status/username/project/main)](https://github.com/username/project/actions)
