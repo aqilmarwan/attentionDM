@@ -165,3 +165,16 @@ class AsymmetricQuantFunction(Function):
     def backward(ctx, grad_output):
         # raise NotImplementedError
         return grad_output, None, None, None
+
+def GroupWise_Quantization(x, group_num):
+    batch_size, channels = x.shape
+    x = x.reshape(batch_size, group_num, -1)
+    
+    # Compute per-group scaling factors
+    x_min = x.min(dim=2, keepdim=True)[0]
+    x_max = x.max(dim=2, keepdim=True)[0]
+    scale = (x_max - x_min) / (2**bit_width - 1)
+    
+    # Quantize each group separately
+    x_q = torch.round((x - x_min) / scale) * scale + x_min
+    return x_q.reshape(batch_size, channels)
