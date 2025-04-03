@@ -407,10 +407,13 @@ class Diffusion(object):
         return model
 
     def calibrate_mixed_precision_attention(self, model, image, device):
-        """Calibrate mixed-precision attention modules specifically"""
+        """
+        Calibrate specifically the mixed-precision attention quantization parameters
+        This addresses the specialized quantization within attention computation
+        """
         print('\n==> Calibrating mixed-precision attention quantization parameters')
         
-        # Find all modules using mixed-precision attention
+        # 1. Find modules utilizing mixed-precision attention
         mixed_attn_modules = []
         for name, module in model.named_modules():
             if hasattr(module, 'mixed_precision') and module.mixed_precision and module.quantization:
@@ -420,14 +423,16 @@ class Diffusion(object):
             print("No mixed-precision attention modules found")
             return
         
-        # Create calibrator and run calibration
+        # 2. Create and use the specialized calibrator
         from utils.attention_quant_util import AttentionCalibrator
         calibrator = AttentionCalibrator(model, device)
         
-        # Use sequential timesteps or important timesteps from diffusion process
-        timesteps = [0, 250, 500, 750, 999]  # Sample across different parts of diffusion
+        # 3. Sample key timesteps across diffusion process for comprehensive calibration
+        # This ensures we calibrate for both early and late diffusion steps
+        timesteps = [0, 250, 500, 750, 999]  
         
-        # Run calibration
+        # 4. Execute calibration on the attention processors
+        # This updates the quantization parameters inside MixedPrecisionAttention modules
         calibrator.calibrate(image, timesteps)
         
         print(f"Calibrated {len(mixed_attn_modules)} mixed-precision attention modules")
