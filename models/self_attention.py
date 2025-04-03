@@ -104,3 +104,18 @@ class EnhancedQSelfAttention(nn.Module):
         out = self.gamma * out + x[:, :channels]
         
         return out
+
+def create_enhanced_attention(in_channels, sequence, args):
+    return EnhancedQSelfAttention(
+        in_channels,
+        quantization=True,
+        sequence=sequence,
+        args=args,
+        mixed_precision=True,
+        bit_config={
+            "query": args.bitwidth,  # Full precision for query projections
+            "key": max(4, args.bitwidth - 2),  # Lower precision for keys
+            "value": args.bitwidth,  # Full precision for values
+            "output": args.bitwidth  # Full precision for output projection
+        }
+    )
