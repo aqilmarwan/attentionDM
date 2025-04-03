@@ -178,3 +178,17 @@ def GroupWise_Quantization(x, group_num):
     # Quantize each group separately
     x_q = torch.round((x - x_min) / scale) * scale + x_min
     return x_q.reshape(batch_size, channels)
+
+def quantize_model(model, calibration_data, args):
+    # First perform general calibration
+    general_calibration(model, calibration_data)
+    
+    # Then perform attention-specific calibration
+    attention_calibration(model, calibration_data)
+    
+    # Finally, set all modules to inference mode
+    for module in model.modules():
+        if isinstance(module, QModule):
+            module.set_calibrate(False)
+    
+    return model
