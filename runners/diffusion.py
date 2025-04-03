@@ -391,3 +391,43 @@ class Diffusion(object):
             #     ema_helper.ema(model)
             # else:
             #     ema_helper = None
+
+    def calibrate_model(self, model, data, device):
+        """Complete calibration pipeline integrating general and attention-specific calibration"""
+        # First perform general calibration (already implemented in the codebase)
+        self.calibrate_general(model, data, device, self.args.batchsize)
+        
+        # Then perform specialized attention calibration
+        self.calibrate_attention(model, data, device, self.args.batchsize)
+        
+        # Finally, add mixed-precision attention calibration if enabled
+        if self.args.mixed_precision_attention:
+            self.calibrate_mixed_precision_attention(model, data, device)
+        
+        return model
+
+    def calibrate_mixed_precision_attention(self, model, image, device):
+        """Calibrate mixed-precision attention modules specifically"""
+        print('\n==> Calibrating mixed-precision attention quantization parameters')
+        
+        # Find all modules using mixed-precision attention
+        mixed_attn_modules = []
+        for name, module in model.named_modules():
+            if hasattr(module, 'mixed_precision') and module.mixed_precision and module.quantization:
+                mixed_attn_modules.append(module)
+        
+        if not mixed_attn_modules:
+            print("No mixed-precision attention modules found")
+            return
+        
+        # Create calibrator and run calibration
+        from utils.attention_quant_util import AttentionCalibrator
+        calibrator = AttentionCalibrator(model, device)
+        
+        # Use sequential timesteps or important timesteps from diffusion process
+        timesteps = [0, 250, 500, 750, 999]  # Sample across different parts of diffusion
+        
+        # Run calibration
+        calibrator.calibrate(image, timesteps)
+        
+        print(f"Calibrated {len(mixed_attn_modules)} mixed-precision attention modules")

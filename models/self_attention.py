@@ -49,6 +49,9 @@ class EnhancedQSelfAttention(nn.Module):
                                       w_bit=self.bit_config["output"], 
                                       a_bit=self.bit_config["output"], 
                                       sequence=sequence, args=args)
+            
+            # Configure specialized group quantization settings
+            self.configure_group_quantization()
         else:
             self.query_conv = nn.Conv2d(in_channels, self.key_channels, kernel_size=1)
             self.key_conv = nn.Conv2d(in_channels, self.key_channels, kernel_size=1)
@@ -67,6 +70,50 @@ class EnhancedQSelfAttention(nn.Module):
             )
         else:
             self.softmax = nn.Softmax(dim=-1)
+    
+    def configure_group_quantization(self):
+        """
+        Configure specialized group sizes for attention projections.
+        This aligns quantization groups with attention head structure for better precision.
+        """
+        # For query/key projections, align groups with head dimensions
+        if hasattr(self, 'query_conv') and isinstance(self.query_conv, QConv2d):
+            # Each query/key group corresponds to one attention head
+            # This preserves intra-head relationships better during quantization
+            self.query_conv.group_num = self.heads  
+            self.key_conv.group_num = self.heads
+            
+            # For value tensors, we can use coarser quantization (fewer groups)
+            # This reduces memory footprint while still preserving essential features
+            self.value_conv.group_num = max(2, self.heads // 2)
+            
+            # Output projection can use standard grouping as it recombines all heads
+            self.output_conv.group_num = 8  # Default group number
+            
+            # Update alpha_activ parameters to match new group dimensions
+            # (necessary because nn.Parameter sizes must match)
+            for conv, name in [(self.query_conv, 'query'), 
+                              (self.key_conv, 'key'), 
+                              (self.value_conv, 'value'), 
+                              (self.output_conv, 'output')]:
+                # Create new alpha_activ with proper dimensions
+                old_alpha = conv.alpha_activ.data
+                new_alpha = torch.zeros(
+                    old_alpha.size(0),  # len_seq dimension stays the same
+                    conv.group_num,     # new group_num 
+                    conv.in_channels    # in_channels stays the same
+                ).to(old_alpha.device)
+                
+                # Initialize with same values spread across new groups
+                for i in range(old_alpha.size(0)):  # For each timestep
+                    for g in range(conv.group_num):
+                        # Distribute old values proportionally into new grouping
+                        old_group_idx = min(g * old_alpha.size(1) // conv.group_num, 
+                                          old_alpha.size(1) - 1)
+                        new_alpha[i, g] = old_alpha[i, old_group_idx]
+                
+                # Replace parameter
+                conv.alpha_activ = nn.Parameter(new_alpha)
     
     def forward(self, x, t=None, timestep=None):
         batch_size, channels, height, width = x.size()
