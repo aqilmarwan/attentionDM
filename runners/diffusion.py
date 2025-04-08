@@ -393,14 +393,19 @@ class Diffusion(object):
             #     ema_helper = None
 
     def calibrate_model(self, model, data, device):
-        """Complete calibration pipeline integrating general and attention-specific calibration"""
-        # First perform general calibration (already implemented in the codebase)
+        """
+        Complete calibration pipeline with three distinct calibration stages
+        """
+        # Stage 1: General calibration for all quantized modules
+        # This establishes baseline quantization for the entire model
         self.calibrate_general(model, data, device, self.args.batchsize)
         
-        # Then perform specialized attention calibration
+        # Stage 2: Attention-specific calibration with entropy optimization
+        # This refines the quantization of attention projection layers
         self.calibrate_attention(model, data, device, self.args.batchsize)
         
-        # Finally, add mixed-precision attention calibration if enabled
+        # Stage 3: Mixed-precision attention calibration if enabled
+        # This calibrates the internal attention computation quantization
         if self.args.mixed_precision_attention:
             self.calibrate_mixed_precision_attention(model, data, device)
         
