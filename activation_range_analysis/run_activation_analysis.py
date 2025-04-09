@@ -1,151 +1,221 @@
+# q_diffusion_analyzer.py
 import os
 import torch
 import argparse
-from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
-from collections import defaultdict
-import json
+from collections import defaultdict, OrderedDict
+import re
 
-# Import your models (adjust imports based on your repository structure)
-from models.ddim import DDIM
-from models.ldm import LDM
-from models.stable_diffusion import StableDiffusion
-from activation_analysis import ModelAnalyzer, plot_activation_ranges
-
-def analyze_model(model_type, output_dir, batch_size=4, image_size=64, channels=3, device='cuda'):
-    """Analyze activation ranges for a specific model type."""
-    print(f"Analyzing {model_type} model...")
+def load_model(model_path):
+    print(f"Loading model from {model_path}")
+    checkpoint = torch.load(model_path, map_location="cpu", weights_only=True)
     
-    # Create dummy input
-    sample_batch = torch.randn(batch_size, channels, image_size, image_size, device=device)
-    
-    # Generate timesteps to sample (you may want to use actual diffusion timesteps)
-    # For this analysis, we'll sample timesteps from the beginning, middle, and end
-    timesteps = list(range(0, 1000, 50))  # Adjust based on your diffusion schedule
-    
-    # Initialize appropriate model
-    if model_type == 'DDIM':
-        model = DDIM().to(device)
-        image_size = 32  # CIFAR-10 size
-    elif model_type == 'StableDiffusion':
-        model = StableDiffusion().to(device)
-        image_size = 512
-    elif model_type == 'LDM-Bedroom':
-        model = LDM(dataset='bedroom').to(device)
-        image_size = 256
-    elif model_type == 'LDM-Church':
-        model = LDM(dataset='church').to(device)
-        image_size = 256
+    if "model" in checkpoint:
+        state_dict = checkpoint["model"]
+    elif "state_dict" in checkpoint:
+        state_dict = checkpoint["state_dict"]
     else:
-        raise ValueError(f"Unknown model type: {model_type}")
-    
-    # Create analyzer
-    analyzer = ModelAnalyzer(model, model_type)
-    
-    # Register hooks for activation statistics
-    analyzer.register_hooks()
-    
-    # Run inference to collect statistics
-    analyzer.run_inference(sample_batch, timesteps)
-    
-    # Collect and process results
-    results = analyzer.collect_results()
-    
-    # Save results
-    model_output_dir = os.path.join(output_dir, model_type)
-    analyzer.save_results(model_output_dir)
-    
-    # Generate plots
-    plot_activation_ranges(results, model_type, model_output_dir)
-    
-    # Clean up
-    analyzer.cleanup()
-    
-    print(f"Analysis completed for {model_type}. Results saved to {model_output_dir}")
-    return results
-
-def cross_model_comparison_plot(all_results, output_dir):
-    """Create comparison plots across all models."""
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Average activation range per model
-    avg_ranges = {}
-    for model_name, results in all_results.items():
-        model_ranges = []
-        for layer_name, stats in results.items():
-            if 'range' in stats:
-                if isinstance(stats['range'], dict):
-                    # Average across timesteps
-                    model_ranges.append(np.mean(list(stats['range'].values())))
-                else:
-                    model_ranges.append(stats['range'])
+        state_dict = checkpoint
         
-        avg_ranges[model_name] = np.mean(model_ranges)
+    return state_dict
+
+def extract_layer_number(key):
+    """Extract meaningful layer numbers with consistent spacing of 5."""
+    # Extract layer type and position
+    if 'down' in key:
+        match = re.search(r'down\.(\d+)', key)
+        if match:
+            # Down blocks start at layer 5 and increment by 5
+            return 5 + int(match.group(1)) * 5
+    elif 'mid' in key:
+        # Mid blocks come after down blocks
+        match = re.search(r'mid\.block\.(\d+)', key)
+        if match:
+            return 40 + int(match.group(1)) * 5
+    elif 'up' in key:
+        match = re.search(r'up\.(\d+)', key)
+        if match:
+            # Up blocks come after mid blocks
+            return 50 + int(match.group(1)) * 5
+    elif 'input' in key or 'conv_in' in key:
+        return 1  # Input layer
+    elif 'output' in key or 'conv_out' in key:
+        return 100  # Output layer
     
-    # Plot average ranges
-    plt.figure(figsize=(10, 6))
-    models = list(avg_ranges.keys())
-    ranges = [avg_ranges[model] for model in models]
+    # Additional internal structure
+    match_block = re.search(r'block\.(\d+)', key)
+    if match_block:
+        block_num = int(match_block.group(1))
+        # Determine base layer from context
+        if 'down' in key:
+            base = 5 + int(key.split('.')[1]) * 5
+        elif 'mid' in key:
+            base = 40
+        elif 'up' in key:
+            base = 50 + int(key.split('.')[1]) * 5
+        else:
+            base = 75
+        # Add small offset for sub-blocks
+        return base + block_num
     
-    plt.bar(models, ranges)
-    plt.title("Average Activation Range Across Models")
-    plt.ylabel("Activation Range (Max - Min)")
-    plt.grid(True, axis='y', linestyle='--', alpha=0.7)
+    # Handle attention layers similarly
+    match_attn = re.search(r'attn\.(\d+)', key)
+    if match_attn:
+        attn_num = int(match_attn.group(1))
+        # Determine base layer from context
+        if 'down' in key:
+            base = 5 + int(key.split('.')[1]) * 5
+        elif 'mid' in key:
+            base = 40
+        elif 'up' in key:
+            base = 50 + int(key.split('.')[1]) * 5
+        else:
+            base = 75
+        # Add small offset for attention blocks
+        return base + attn_num + 3  # Offset from regular blocks
+    
+    # Default numbering for other layers
+    if any(x in key for x in ['norm', 'temb']):
+        return 2  # Early layers
+    
+    return 95  # Default for unmatched layers
+
+def safe_sample_tensor(tensor, max_samples=10000):
+    """Safely sample a tensor to avoid memory issues."""
+    if tensor.numel() <= max_samples:
+        return tensor.flatten().tolist()
+    else:
+        # Random sampling for large tensors
+        indices = torch.randperm(tensor.numel())[:max_samples]
+        return tensor.flatten()[indices].tolist()
+
+def analyze_model(state_dict):
+    """Analyze the model and extract activation statistics by layer."""
+    # Group parameters by layer number
+    layers = defaultdict(list)
+    
+    # First pass: assign layer numbers
+    for key, tensor in state_dict.items():
+        if not isinstance(tensor, torch.Tensor) or tensor.dim() == 0:
+            continue
+            
+        layer_num = extract_layer_number(key)
+        if layer_num > 0:  # Valid layer number
+            # Store the key and its range
+            min_val = float(tensor.min())
+            max_val = float(tensor.max())
+            range_val = max_val - min_val
+            
+            # Store a small sample for distribution
+            samples = safe_sample_tensor(tensor)
+            
+            layers[layer_num].append({
+                'key': key,
+                'min': min_val,
+                'max': max_val,
+                'range': range_val,
+                'samples': samples
+            })
+    
+    # Aggregate results by layer
+    layer_stats = {}
+    for layer_num, params in layers.items():
+        if not params:
+            continue
+            
+        # Collect all samples for this layer
+        all_samples = []
+        for p in params:
+            all_samples.extend(p['samples'])
+            
+        # Use only a subset if there are too many
+        if len(all_samples) > 50000:
+            all_samples = np.random.choice(all_samples, 50000, replace=False).tolist()
+            
+        layer_stats[layer_num] = {
+            'samples': all_samples,
+            'range': max([p['max'] for p in params]) - min([p['min'] for p in params])
+        }
+    
+    return layer_stats
+
+def plot_q_diffusion_style(layer_stats, model_name, output_path):
+    """Create a plot similar to the Q-Diffusion paper."""
+    # Sort layers by number
+    layer_numbers = sorted(layer_stats.keys())
+    
+    # Create the figure with specific dimensions
+    plt.figure(figsize=(15, 4))
+    
+    # Prepare data for boxplot
+    data = [layer_stats[ln]['samples'] for ln in layer_numbers]
+    
+    # Create boxplot
+    boxplot = plt.boxplot(data, 
+                         patch_artist=True,
+                         showfliers=True,  # Show outliers
+                         flierprops={'marker': 'o', 'markersize': 2, 'alpha': 0.5})
+    
+    # Customize appearance
+    for box in boxplot['boxes']:
+        box.set(color='blue', linewidth=1)
+        box.set(facecolor='lightblue')
+    for whisker in boxplot['whiskers']:
+        whisker.set(color='black', linewidth=1)
+    for cap in boxplot['caps']:
+        cap.set(color='black', linewidth=1)
+    for median in boxplot['medians']:
+        median.set(color='red', linewidth=1)
+    for flier in boxplot['fliers']:
+        flier.set(color='darkgrey', marker='o', markersize=2)
+    
+    # Add labels and title
+    plt.xlabel('Layer number')
+    plt.ylabel('Activation range')
+    plt.title(model_name)
+    
+    # Set x-axis ticks
+    plt.xticks(range(1, len(layer_numbers) + 1), layer_numbers)
+    
+    # Add dotted horizontal line at y=0
+    plt.axhline(y=0, color='gray', linestyle='dotted', alpha=0.5)
+    
+    # Improve layout
     plt.tight_layout()
     
-    plt.savefig(os.path.join(output_dir, "model_comparison_activation_ranges.png"), dpi=300)
+    # Save and close
+    plt.savefig(output_path, dpi=300)
     plt.close()
     
-    # Create timestep progression comparison
-    plt.figure(figsize=(12, 8))
-    
-    # We'll use the first attention layer from each model for comparison
-    for model_name, results in all_results.items():
-        for layer_name, stats in results.items():
-            if 'attn' in layer_name or 'attention' in layer_name:
-                if 'range' in stats and isinstance(stats['range'], dict):
-                    # Sort by timestep
-                    timesteps = sorted(int(t) for t in stats['range'].keys())
-                    values = [stats['range'][str(t)] for t in timesteps]
-                    
-                    plt.plot(timesteps, values, label=f"{model_name} - {layer_name.split('.')[-1]}")
-                    break  # Only use the first attention layer
-    
-    plt.title("Activation Range Progression Across Timesteps")
-    plt.xlabel("Timestep")
-    plt.ylabel("Activation Range (Max - Min)")
-    plt.grid(True, linestyle='--', alpha=0.7)
-    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    plt.tight_layout()
-    
-    plt.savefig(os.path.join(output_dir, "timestep_progression_comparison.png"), dpi=300)
-    plt.close()
+    print(f"Plot saved to {output_path}")
 
 def main():
-    parser = argparse.ArgumentParser(description="Analyze activation ranges in diffusion models")
-    parser.add_argument("--output_dir", type=str, default="activation_analysis_results", 
-                        help="Directory to save results")
-    parser.add_argument("--models", nargs='+', default=['DDIM', 'StableDiffusion', 'LDM-Bedroom', 'LDM-Church'],
-                        help="Models to analyze")
-    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
-                        help="Device to run analysis on")
-    
+    parser = argparse.ArgumentParser(description="Q-Diffusion style activation range analysis")
+    parser.add_argument("--model_path", type=str, required=True, help="Path to model checkpoint")
+    parser.add_argument("--model_name", type=str, default="LDM", help="Model name for the plot")
+    parser.add_argument("--output_dir", type=str, default="./analysis_results", help="Output directory")
     args = parser.parse_args()
     
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
     
-    # Analyze each model
-    all_results = {}
-    for model_type in args.models:
-        results = analyze_model(model_type, args.output_dir, device=args.device)
-        all_results[model_type] = results
+    # Load and analyze model
+    state_dict = load_model(args.model_path)
+    layer_stats = analyze_model(state_dict)
     
-    # Generate cross-model comparison plots
-    cross_model_comparison_plot(all_results, args.output_dir)
+    # Save layer statistics
+    stats_path = os.path.join(args.output_dir, f"{args.model_name}_layer_stats.txt")
+    with open(stats_path, 'w') as f:
+        for layer_num in sorted(layer_stats.keys()):
+            f.write(f"Layer {layer_num}:\n")
+            f.write(f"  Range: {layer_stats[layer_num]['range']}\n")
+            f.write(f"  Sample count: {len(layer_stats[layer_num]['samples'])}\n")
+            f.write("\n")
     
-    print(f"All analyses completed. Results saved to {args.output_dir}")
+    # Create visualization
+    plot_path = os.path.join(args.output_dir, f"{args.model_name}_q_diffusion_style.png")
+    plot_q_diffusion_style(layer_stats, args.model_name, plot_path)
 
 if __name__ == "__main__":
     main()
