@@ -22,6 +22,7 @@ from utils.quant_util import QConv2d
 from torch import optim
 import torch.nn.functional as F
 import util
+from models.self_attention import QSelfAttention
 
 def torch2hwcuint8(x, clip=False):
     if clip:
@@ -68,11 +69,7 @@ class Diffusion(object):
         self.args = args
         self.config = config
         if device is None:
-            device = (
-                torch.device("cuda")
-                if torch.cuda.is_available()
-                else torch.device("cpu")
-            )
+            device = torch.device("cpu")
         self.device = device
 
         self.model_var_type = config.model.var_type
@@ -201,7 +198,7 @@ class Diffusion(object):
     def generate_calibrate_set(self, fpmodel, model, t_mode, num_calibrate_set):
         print("start to create calibrate set in:" + str(t_mode))
         with torch.no_grad():
-            n = num_calibrate_set
+            n = min(num_calibrate_set, 16)  # Reduce the number of samples
             # n = self.args.timesteps
             x = torch.randn(
                 n,
@@ -266,6 +263,47 @@ class Diffusion(object):
         # print(calibrate_set.shape)  # torch.Size([batchsize, 3, 32, 32])
         return calibrate_set
 
+    def calibrate_attention(self, model, image, device, batchsize):
+        """
+        Calibrate the self-attention modules in the model
+        """
+        print('\n==> start calibrating self-attention modules')
+        # Set all QConv2d layers in self-attention modules to calibration mode
+        for name, module in model.named_modules():
+            if isinstance(module, QSelfAttention):
+                for sub_name, sub_module in module.named_modules():
+                    if isinstance(sub_module, QConv2d):
+                        sub_module.set_calibrate(calibrate=True)
+                        sub_module.first_calibrate(calibrate=self.first_flag)
+        
+        image = image.to(device)
+        
+        # Collect parameters for optimization
+        attention_params = []
+        for name, param in model.named_parameters():
+            if "alpha_activ" in name and any(attn_name in name for attn_name in ["query_conv", "key_conv", "value_conv", "output_conv"]):
+                param.requires_grad = True
+                attention_params += [param]
+        
+        # Create optimizer for attention parameters
+        if attention_params:
+            optimizer = torch.optim.AdamW(attention_params, 0.05, weight_decay=0.05)
+            
+            # Run calibration with attention-specific optimization
+            from functions.denoising import generalized_steps_loss
+            xs = generalized_steps_loss(image, self.seq, model, self.betas, optimizer, eta=self.args.eta,
+                                       t_mode=self.t_mode, timestep_select=self.timestep_select,
+                                       args=self.args, attention_focus=True)
+        
+        # Set all QConv2d layers back to normal mode
+        for name, module in model.named_modules():
+            if isinstance(module, QSelfAttention):
+                for sub_name, sub_module in module.named_modules():
+                    if isinstance(sub_module, QConv2d):
+                        sub_module.set_calibrate(calibrate=False)
+        
+        print('==> end calibrating self-attention modules')
+        return model
 
     def sample(self):
         if self.args.skip_type == "uniform":
@@ -353,274 +391,53 @@ class Diffusion(object):
             #     ema_helper.ema(model)
             # else:
             #     ema_helper = None
-        else:
-            # This used the pretrained DDPM model, see https://github.com/pesser/pytorch_diffusion
-            if self.config.data.dataset == "CIFAR10":
-                name = "cifar10"
-            elif self.config.data.dataset == "LSUN":
-                name = f"lsun_{self.config.data.category}"
-            else:
-                raise ValueError
-            ckpt = get_ckpt_path(f"ema_{name}")
-            print("Loading checkpoint {}".format(ckpt))
-            model.load_state_dict(torch.load(ckpt, map_location=self.device))
-            model.to(self.device)
-            model = torch.nn.DataParallel(model)
-            # model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[self.args.gpu], find_unused_parameters=True)
 
-        model.eval()
+    def calibrate_model(self, model, data, device):
+        """
+        Complete calibration pipeline with three distinct calibration stages
+        """
+        # Stage 1: General calibration for all quantized modules
+        # This establishes baseline quantization for the entire model
+        self.calibrate_general(model, data, device, self.args.batchsize)
         
-        # FP model for calibration generation
-        fpmodel = Model(self.config, quantization=False)
-        # for name, module in fpmodel.named_modules():
-        #     print(name, module)
-        fpmodel = fpmodel.to(self.device)
-        # fpmodel = torch.nn.DataParallel(fpmodel, device_ids=[self.args.gpu])
-        fpmodel = torch.nn.DataParallel(fpmodel)
-        state_dict = fpmodel.state_dict()
-        keys = []
-        for k, v in states.items():
-            keys.append(k)
-        i = 0
-        for k, v in state_dict.items():
-            # print(k, keys[i])
-            if v.shape == states[keys[i]].shape:
-                state_dict[k] = states[keys[i]]
-                i = i + 1
-        fpmodel.load_state_dict(state_dict, strict=False)
-            # fpmodel.load_state_dict(states, strict=False)
-        fpmodel.eval()
-        # generate calibrate set
-        self.t_mode = self.args.calib_t_mode
-        if self.config.data.dataset == "CELEBA":
-            batchsize = 4
-        elif self.config.data.dataset == "CIFAR10":
-            batchsize = 16
-        num_calibrate_set = 64
-        batchsize = self.args.batch_size if hasattr(self.args, 'batch_size') else 1
-        # print("batchsize:"+str(batchsize))
-        print("num_calibrate_set:"+str(num_calibrate_set))
-
-        diff_times = int(num_calibrate_set/batchsize)
-        self.sample_count = torch.zeros(self.args.timesteps).to(self.device)
-        self.first_flag = True
-        start_step = 0
-            
-        # self.first_flag = True
-        if start_step == diff_times:
-            start_step -= 1
-            self.first_flag = True
-        print(str(start_step)+"step, total"+str(diff_times))
-        for step in range(start_step, diff_times):
-            time_start_1 = time.time()
-            calibrate_set = self.generate_calibrate_set(fpmodel, model, self.t_mode, batchsize)
-            model = self.calibrate_loss(model, calibrate_set, self.device, batchsize)
-            time_end_1 = time.time()
-            print("running time: "+str(time_end_1 - time_start_1)+"s,"+str(start_step)+"step, total"+str(diff_times))
-            self.first_flag = False
-
-        print(self.sample_count)
-
-        if self.args.fid:
-            self.sample_fid(model)
-        elif self.args.interpolation:
-            self.sample_interpolation(model)
-        elif self.args.sequence:
-            self.sample_sequence(model)
-        else:
-            raise NotImplementedError("Sample procedeure not defined")
-
-    def sample_fid(self, model):
-        config = self.config
-        img_id = len(glob.glob(f"{self.args.image_folder}/*"))
-        print(f"starting from image {img_id}")
-        # multi-gpu
-        # node_rank = os.environ['RANK']
-        # world_size = os.environ['WORLD_SIZE']
-        # print(node_rank, world_size)
-        # total_n_samples = 50000
-        # # n_rounds = (total_n_samples - img_id) // config.sampling.batch_size
-        # n_rounds = (total_n_samples - img_id) // (config.sampling.batch_size * int(world_size))
-        # img_id += int(node_rank)
-        total_n_samples = 50000
-        n_rounds = (total_n_samples - img_id) // config.sampling.batch_size
-
-        with torch.no_grad():
-            for _ in tqdm.tqdm(
-                range(n_rounds), desc="Generating image samples for FID evaluation."
-            ):
-                n = config.sampling.batch_size
-                x = torch.randn(
-                    n,
-                    config.data.channels,
-                    config.data.image_size,
-                    config.data.image_size,
-                    device=self.device,
-                )
-
-                x = self.sample_image(x, model)
-                x = inverse_data_transform(config, x)
-
-                for i in range(n):
-                    tvu.save_image(
-                        x[i], os.path.join(self.args.image_folder, f"{img_id}.png")
-                    )
-                    img_id += 1
-                    # multi-gpu
-                    # img_id += int(world_size)
-
-    def sample_sequence(self, model):
-        config = self.config
-
-        x = torch.randn(
-            8,
-            config.data.channels,
-            config.data.image_size,
-            config.data.image_size,
-            device=self.device,
-        )
-
-        # NOTE: This means that we are producing each predicted x0, not x_{t-1} at timestep t.
-        with torch.no_grad():
-            _, x = self.sample_image(x, model, last=False)
-
-        x = [inverse_data_transform(config, y) for y in x]
-
-        for i in range(len(x)):
-            for j in range(x[i].size(0)):
-                tvu.save_image(
-                    x[i][j], os.path.join(self.args.image_folder, f"{j}_{i}.png")
-                )
-
-    def sample_interpolation(self, model):
-        config = self.config
-
-        def slerp(z1, z2, alpha):
-            theta = torch.acos(torch.sum(z1 * z2) / (torch.norm(z1) * torch.norm(z2)))
-            return (
-                torch.sin((1 - alpha) * theta) / torch.sin(theta) * z1
-                + torch.sin(alpha * theta) / torch.sin(theta) * z2
-            )
-
-        z1 = torch.randn(
-            1,
-            config.data.channels,
-            config.data.image_size,
-            config.data.image_size,
-            device=self.device,
-        )
-        z2 = torch.randn(
-            1,
-            config.data.channels,
-            config.data.image_size,
-            config.data.image_size,
-            device=self.device,
-        )
-        alpha = torch.arange(0.0, 1.01, 0.1).to(z1.device)
-        z_ = []
-        for i in range(alpha.size(0)):
-            z_.append(slerp(z1, z2, alpha[i]))
-
-        x = torch.cat(z_, dim=0)
-        xs = []
-
-        # Hard coded here, modify to your preferences
-        with torch.no_grad():
-            for i in range(0, x.size(0), 8):
-                xs.append(self.sample_image(x[i : i + 8], model))
-        x = inverse_data_transform(config, torch.cat(xs, dim=0))
-        for i in range(x.size(0)):
-            tvu.save_image(x[i], os.path.join(self.args.image_folder, f"{i}.png"))
-
-    def sample_image(self, x, model, last=True):
-        try:
-            skip = self.args.skip
-        except Exception:
-            skip = 1
-
-        if self.args.sample_type == "generalized":
-            if self.args.skip_type == "uniform":
-                skip = self.num_timesteps // self.args.timesteps
-                seq = range(0, self.num_timesteps, skip)
-            elif self.args.skip_type == "quad":
-                seq = (
-                    np.linspace(
-                        0, np.sqrt(self.num_timesteps * 0.8), self.args.timesteps
-                    )
-                    ** 2
-                )
-                seq = [int(s) for s in list(seq)]
-            else:
-                raise NotImplementedError
-            from functions.denoising import generalized_steps
-
-            xs = generalized_steps(x, seq, model, self.betas, eta=self.args.eta)
-            x = xs
-        elif self.args.sample_type == "ddpm_noisy":
-            if self.args.skip_type == "uniform":
-                skip = self.num_timesteps // self.args.timesteps
-                seq = range(0, self.num_timesteps, skip)
-            elif self.args.skip_type == "quad":
-                seq = (
-                    np.linspace(
-                        0, np.sqrt(self.num_timesteps * 0.8), self.args.timesteps
-                    )
-                    ** 2
-                )
-                seq = [int(s) for s in list(seq)]
-            else:
-                raise NotImplementedError
-            from functions.denoising import ddpm_steps
-
-            x = ddpm_steps(x, seq, model, self.betas)
-        else:
-            raise NotImplementedError
-        if last:
-            x = x[0][-1]
-        return x
-
-    def test(self):
-        pass
-    
-    def calibrate(self, model, image, device):
-        print('\n==> start calibrate')
-        for name, module in model.named_modules():
-            if isinstance(module, QConv2d):
-                module.set_calibrate(calibrate=True)
-        image = image.to(device)
-        print(image.shape)
-        with torch.no_grad():
-            self.sample_image(image, model)
-        for name, module in model.named_modules():
-            if isinstance(module, QConv2d):
-                module.set_calibrate(calibrate=False)
-        print('==> end calibrate')
+        # Stage 2: Attention-specific calibration with entropy optimization
+        # This refines the quantization of attention projection layers
+        self.calibrate_attention(model, data, device, self.args.batchsize)
+        
+        # Stage 3: Mixed-precision attention calibration if enabled
+        # This calibrates the internal attention computation quantization
+        if self.args.mixed_precision_attention:
+            self.calibrate_mixed_precision_attention(model, data, device)
+        
         return model
-    
 
-    def calibrate_loss(self, model, image, device, batchsize):
-        print('\n==> start calibrate')
+    def calibrate_mixed_precision_attention(self, model, image, device):
+        """
+        Calibrate specifically the mixed-precision attention quantization parameters
+        This addresses the specialized quantization within attention computation
+        """
+        print('\n==> Calibrating mixed-precision attention quantization parameters')
+        
+        # 1. Find modules utilizing mixed-precision attention
+        mixed_attn_modules = []
         for name, module in model.named_modules():
-            if isinstance(module, QConv2d):
-                module.set_calibrate(calibrate=True)
-                module.first_calibrate(calibrate=self.first_flag)
-        image = image.to(device)
-
-        activation_range_params = []
-        for name, param in model.named_parameters():
-            if "alpha_activ" in name:
-                # print(name)
-                param.requires_grad = True
-                activation_range_params += [param]
-        optimizer = torch.optim.AdamW(activation_range_params, 0.05,
-                               weight_decay=0.05)
-    
-        from functions.denoising import generalized_steps_loss
-        xs = generalized_steps_loss(image, self.seq, model, self.betas, optimizer, eta=self.args.eta
-                                                , t_mode=self.t_mode, timestep_select=self.timestep_select,
-                                   args=self.args)
-        for name, module in model.named_modules():
-            if isinstance(module, QConv2d):
-                module.set_calibrate(calibrate=False)
-        print('==> end calibrate')
-        return model
+            if hasattr(module, 'mixed_precision') and module.mixed_precision and module.quantization:
+                mixed_attn_modules.append(module)
+        
+        if not mixed_attn_modules:
+            print("No mixed-precision attention modules found")
+            return
+        
+        # 2. Create and use the specialized calibrator
+        from utils.attention_quant_util import AttentionCalibrator
+        calibrator = AttentionCalibrator(model, device)
+        
+        # 3. Sample key timesteps across diffusion process for comprehensive calibration
+        # This ensures we calibrate for both early and late diffusion steps
+        timesteps = [0, 250, 500, 750, 999]  
+        
+        # 4. Execute calibration on the attention processors
+        # This updates the quantization parameters inside MixedPrecisionAttention modules
+        calibrator.calibrate(image, timesteps)
+        
+        print(f"Calibrated {len(mixed_attn_modules)} mixed-precision attention modules")

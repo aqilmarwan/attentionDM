@@ -86,6 +86,17 @@ def parse_args_and_config():
         help="eta used to control the variances of sigma",
     )
     parser.add_argument(
+        "--calibrate_attention",
+        action="store_true",
+        help="Whether to calibrate attention modules separately",
+    )
+    parser.add_argument(
+        "--attention_loss_weight",
+        type=float,
+        default=0.5,
+        help="Weight for attention-specific loss during calibration",
+    )
+    parser.add_argument(
         "--calib_t_mode",
         default="real",
         type=str,
