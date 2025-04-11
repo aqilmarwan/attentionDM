@@ -1,4 +1,4 @@
-# AttentionDM
+# PTQ-AttnDM
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Build Status](https://img.shields.io/github/workflow/status/username/project/main)](https://github.com/username/project/actions)
@@ -7,7 +7,7 @@
 
 ## Overview
 
-This is a pytorch implementation of the paper "attentionDM: A Tiny and Accurate implementation of Post Training Quantisation with Self-attention on Diffusion Models".
+This is a pytorch implementation of the paper "PTQ-AttnDM: An Enhanced implementation of Post Training Quantisation with Self-attention on Diffusion Models".
 
 
 ## Features
@@ -34,7 +34,7 @@ Step-by-step installation instructions:
 
 ## Clone the repository
 ```bash
-git clone https://github.com/aqilmarwan/tinyDM.git
+git clone https://github.com/aqilmarwan/attentionDM.git
 cd tinyDM
 ```
 
