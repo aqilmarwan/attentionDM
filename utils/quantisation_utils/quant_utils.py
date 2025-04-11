@@ -166,7 +166,7 @@ class AsymmetricQuantFunction(Function):
         # raise NotImplementedError
         return grad_output, None, None, None
 
-def GroupWise_Quantization(x, group_num):
+def GroupWise_Quantization(x, group_num, bit_width=8):
     batch_size, channels = x.shape
     x = x.reshape(batch_size, group_num, -1)
     
