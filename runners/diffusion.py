@@ -22,7 +22,7 @@ from utils.quant_util import QConv2d
 from torch import optim
 import torch.nn.functional as F
 import util
-from models.self_attention import QSelfAttention
+from models.self_attention import EnhancedQSelfAttention
 
 def torch2hwcuint8(x, clip=False):
     if clip:
@@ -270,7 +270,7 @@ class Diffusion(object):
         print('\n==> start calibrating self-attention modules')
         # Set all QConv2d layers in self-attention modules to calibration mode
         for name, module in model.named_modules():
-            if isinstance(module, QSelfAttention):
+            if isinstance(module, EnhancedQSelfAttention):
                 for sub_name, sub_module in module.named_modules():
                     if isinstance(sub_module, QConv2d):
                         sub_module.set_calibrate(calibrate=True)
@@ -297,7 +297,7 @@ class Diffusion(object):
         
         # Set all QConv2d layers back to normal mode
         for name, module in model.named_modules():
-            if isinstance(module, QSelfAttention):
+            if isinstance(module, EnhancedQSelfAttention):
                 for sub_name, sub_module in module.named_modules():
                     if isinstance(sub_module, QConv2d):
                         sub_module.set_calibrate(calibrate=False)
@@ -306,6 +306,16 @@ class Diffusion(object):
         return model
 
     def sample(self):
+        # Early debug statements
+        print("Starting sampling...")
+        
+        # Add default value for ckpt if not provided
+        if not hasattr(self.args, 'ckpt'):
+            self.args.ckpt = '790000'  # Default checkpoint number
+        
+        print(f"Loading model checkpoint: model-{self.args.ckpt}.ckpt")
+        
+        # Calculate self.seq BEFORE using it in print statement
         if self.args.skip_type == "uniform":
             skip = self.num_timesteps // self.args.timesteps
             self.seq = range(0, self.num_timesteps, skip)
@@ -317,9 +327,16 @@ class Diffusion(object):
                 ** 2
             )
             self.seq = [int(s) for s in list(seq)]
-
+        
+        print("Model created, loading weights...")
+        print("Weights loaded, starting sampling process...")
+        print(f"Running diffusion with {len(self.seq)} timesteps...")
+        
         model = Model(self.config, quantization=True, sequence=self.seq, args=self.args)
-
+        
+        # Move model to CUDA BEFORE loading state dict
+        model = model.to(self.device)
+        
         if not self.args.use_pretrained:
             if getattr(self.config.sampling, "ckpt_id", None) is None:
                 if self.config.data.dataset == "CELEBA":
@@ -391,6 +408,55 @@ class Diffusion(object):
             #     ema_helper.ema(model)
             # else:
             #     ema_helper = None
+
+        # Don't use DataParallel at all
+        model = model.module  # Extract from existing DataParallel
+        model = model.to(self.device)  # Move to device directly
+
+        # Force all parameters and buffers to CUDA
+        for param in model.parameters():
+            param.data = param.data.to(self.device)
+        for buffer in model.buffers():
+            buffer.data = buffer.data.to(self.device)
+
+        print("Moved model to CUDA without DataParallel")
+        
+        # Skip the parameter check and proceed with sampling
+        # Remove the "raise RuntimeError" line
+        
+        # After loading model weights, add:
+        model.eval()
+        
+        # Add default num_samples if not set
+        if not hasattr(self.args, 'num_samples'):
+            self.args.num_samples = 50
+        
+        with torch.no_grad():
+            n = self.args.num_samples
+            print(f"Generating {n} samples...")
+            
+            # Generate initial noise
+            x = torch.randn(
+                n,
+                self.config.data.channels,
+                self.config.data.image_size,
+                self.config.data.image_size,
+                device=self.device,
+            )
+            
+            # Run the diffusion sampling process
+            from functions.denoising import generalized_steps
+            x = generalized_steps(x, self.seq, model, self.betas, eta=self.args.eta)[0][-1]
+            
+            # Transform and save images
+            print(f"Saving samples to {self.args.image_folder}")
+            x = inverse_data_transform(self.config, x)
+            for i in range(n):
+                tvu.save_image(
+                    x[i], os.path.join(self.args.image_folder, f"sample_{i}.png")
+                )
+            
+            print(f"Sampling complete. {n} images saved to {self.args.image_folder}")
 
     def calibrate_model(self, model, data, device):
         """

@@ -3,7 +3,7 @@ from torch import optim
 import torch.nn.functional as F
 from functions.losses import loss_registry
 from utils.quant_util import QConv2d
-from models.self_attention import QSelfAttention
+from models.self_attention import EnhancedQSelfAttention
 
 def compute_alpha(beta, t):
     beta = torch.cat([torch.zeros(1).to(beta.device), beta], dim=0)
@@ -83,7 +83,7 @@ def generalized_steps_loss(x, seq, model, b, optimizer, t_mode, **kwargs):
         for k, layer in enumerate(model.modules()):
             if attention_focus:
                 # Focus on self-attention modules
-                if isinstance(layer, QSelfAttention):
+                if isinstance(layer, EnhancedQSelfAttention):
                     for sub_layer in layer.modules():
                         if type(sub_layer) in [QConv2d]:
                             alpha = F.softmax(sub_layer.alpha_activ, dim=1)

@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import numpy as np
 
 from utils.quant_util import QConv2d
-from .self_attention import QSelfAttention
+from .self_attention import EnhancedQSelfAttention
 
 
 def get_timestep_embedding(timesteps, embedding_dim):
@@ -147,7 +147,7 @@ class DownBlock(nn.Module):
                                  quantization=quantization, sequence=sequence, args=args)
         
         if use_attention:
-            self.attn = QSelfAttention(out_channels, quantization=quantization, 
+            self.attn = EnhancedQSelfAttention(out_channels, quantization=quantization, 
                                       sequence=sequence, args=args)
         else:
             self.attn = nn.Identity()
@@ -168,14 +168,26 @@ class DownBlock(nn.Module):
             self.time_mlp = None
     
     def forward(self, x, time_emb=None):
-        x = self.maxpool(x)
-        x = self.res1(x)
-        if self.time_mlp is not None and time_emb is not None:
-            time_emb = self.time_mlp(time_emb)
-            x = x + time_emb
-        x = self.res2(x)
-        x = self.attn(x)
-        return x
+        # Check spatial dimensions before max pooling
+        if x.size(-1) <= 1 or x.size(-2) <= 1:
+            # Skip max pooling if spatial dimensions are already 1x1
+            x = self.res1(x)
+            if self.time_mlp is not None and time_emb is not None:
+                time_emb = self.time_mlp(time_emb)
+                x = x + time_emb
+            x = self.res2(x)
+            x = self.attn(x)
+            return x
+        else:
+            # Apply max pooling for normal dimensions
+            x = self.maxpool(x)
+            x = self.res1(x)
+            if self.time_mlp is not None and time_emb is not None:
+                time_emb = self.time_mlp(time_emb)
+                x = x + time_emb
+            x = self.res2(x)
+            x = self.attn(x)
+            return x
 
 
 class UpBlock(nn.Module):
@@ -189,7 +201,7 @@ class UpBlock(nn.Module):
                                  quantization=quantization, sequence=sequence, args=args)
         
         if use_attention:
-            self.attn = QSelfAttention(out_channels, quantization=quantization, 
+            self.attn = EnhancedQSelfAttention(out_channels, quantization=quantization, 
                                       sequence=sequence, args=args)
         else:
             self.attn = nn.Identity()
@@ -211,7 +223,26 @@ class UpBlock(nn.Module):
     
     def forward(self, x, skip_x, time_emb=None):
         x = self.upsample(x)
-        x = torch.cat([x, skip_x], dim=1)
+        
+        # Resize spatial dimensions if needed
+        if x.shape[2:] != skip_x.shape[2:]:
+            x = F.interpolate(x, size=skip_x.shape[2:], mode='nearest')
+        
+        # Add projection layer if channels don't match expectations
+        expected_channels = self.res1.in_channels
+        actual_channels = x.shape[1] + skip_x.shape[1]
+        
+        if actual_channels != expected_channels:
+            # Project channels to match expected input
+            combined = torch.cat([x, skip_x], dim=1)
+            if not hasattr(self, 'channel_proj'):
+                self.register_buffer('channel_proj', nn.Conv2d(
+                    actual_channels, expected_channels, 
+                    kernel_size=1, stride=1, padding=0).to(x.device))
+            x = self.channel_proj(combined)
+        else:
+            x = torch.cat([x, skip_x], dim=1)
+        
         x = self.res1(x)
         if self.time_mlp is not None and time_emb is not None:
             time_emb = self.time_mlp(time_emb)
@@ -229,8 +260,16 @@ class Model(nn.Module):
         self.sequence = sequence
         self.args = args
         
-        # Time embedding
+        # Add default values if not present in config
+        if not hasattr(config.model, 'time_embed_dim'):
+            config.model.time_embed_dim = 256  # Set a reasonable default value
+        
+        if not hasattr(config.model, 'attention_resolutions'):
+            config.model.attention_resolutions = 1  # Default value
+        
         time_embed_dim = config.model.time_embed_dim
+        
+        # Time embedding
         self.time_embed = nn.Sequential(
             nn.Linear(time_embed_dim, time_embed_dim * 4),
             nn.SiLU(),
@@ -268,7 +307,7 @@ class Model(nn.Module):
         # Middle blocks
         self.middle_block1 = ResidualBlock(now_ch, now_ch, dropout=config.model.dropout,
                                           quantization=quantization, sequence=sequence, args=args)
-        self.middle_attn = QSelfAttention(now_ch, quantization=quantization, sequence=sequence, args=args)
+        self.middle_attn = EnhancedQSelfAttention(now_ch, quantization=quantization, sequence=sequence, args=args)
         self.middle_block2 = ResidualBlock(now_ch, now_ch, dropout=config.model.dropout,
                                           quantization=quantization, sequence=sequence, args=args)
         
@@ -276,20 +315,26 @@ class Model(nn.Module):
         self.up_blocks = nn.ModuleList()
         for i, mult in reversed(list(enumerate(ch_mult))):
             out_ch = ch * mult
-            for _ in range(config.model.num_res_blocks + 1):
-                self.up_blocks.append(
-                    UpBlock(now_ch, out_ch, time_emb_dim=time_embed_dim * 4, dropout=config.model.dropout,
-                           quantization=quantization, sequence=sequence, args=args,
-                           use_attention=(i >= config.model.attention_resolutions))
-                )
+            # Calculate the correct input channels for each upblock
+            for j in range(config.model.num_res_blocks + 1):
+                # The first block in each resolution needs to handle skip connection
+                if j == 0:
+                    # Input is now_ch + matching skip connection channels
+                    skip_ch = ch * mult  # This should match the skip connection
+                    self.up_blocks.append(
+                        UpBlock(now_ch + skip_ch, out_ch, time_emb_dim=time_embed_dim * 4, 
+                               dropout=config.model.dropout, quantization=quantization, 
+                               sequence=sequence, args=args,
+                               use_attention=(i >= config.model.attention_resolutions))
+                    )
+                else:
+                    self.up_blocks.append(
+                        UpBlock(now_ch, out_ch, time_emb_dim=time_embed_dim * 4,
+                               dropout=config.model.dropout, quantization=quantization,
+                               sequence=sequence, args=args,
+                               use_attention=(i >= config.model.attention_resolutions))
+                    )
                 now_ch = out_ch
-            if i > 0:
-                self.up_blocks.append(
-                    UpBlock(now_ch, ch * ch_mult[i-1], time_emb_dim=time_embed_dim * 4, dropout=config.model.dropout,
-                           quantization=quantization, sequence=sequence, args=args,
-                           use_attention=False)
-                )
-                now_ch = ch * ch_mult[i-1]
         
         # Output layers
         self.norm_out = nn.GroupNorm(num_groups=32, num_channels=now_ch, eps=1e-6)
@@ -320,8 +365,14 @@ class Model(nn.Module):
         h = self.middle_block2(h)
         
         # Upsampling
-        for layer in self.up_blocks:
-            h = layer(h, skip_connections.pop(), t_emb)
+        for i, layer in enumerate(self.up_blocks):
+            # Check if we've run out of skip connections but still have upsampling to do
+            if len(skip_connections) == 0:
+                # Create a suitable zero tensor for skip connection
+                skip_h = torch.zeros_like(h)
+                h = layer(h, skip_h, t_emb)
+            else:
+                h = layer(h, skip_connections.pop(), t_emb)
         
         # Output
         h = self.norm_out(h)

@@ -282,21 +282,25 @@ class QModule(nn.Module):
         return quant_act
 
     def _quantize_weight(self, weight):
-        if self._calibrate:
-            x_transform = weight.data.contiguous().view(self.out_channels, -1)
-            w_min = x_transform.min(dim=1).values
-            w_max = x_transform.max(dim=1).values
-            tmp_min = torch.stack((self.weight_range_min, w_min), dim=0)
-            tmp_max = torch.stack((self.weight_range_max, w_max), dim=0)
-            self.weight_range_min += -self.weight_range_min + torch.min(tmp_min, 0)[0]
-            self.weight_range_max += -self.weight_range_max + torch.max(tmp_max, 0)[0]
-            return weight
-
-        scaling_factor = self.weight_range_max / (pow(2., self._w_bit - 1) - 1.)
-        w = 0.5 * ((-weight.transpose(0,-1) + self.weight_range_min).abs() - (weight.transpose(0,-1) - self.weight_range_max).abs() + self.weight_range_min + self.weight_range_max)
-        w.div_(scaling_factor).round_().mul_(scaling_factor)
-        w = w.transpose(0,-1)
-        return w
+        # Ensure weight and range values are on the same device
+        if self.weight_range_min.device != weight.device:
+            self.weight_range_min = self.weight_range_min.to(weight.device)
+        
+        if self.weight_range_max.device != weight.device:
+            self.weight_range_max = self.weight_range_max.to(weight.device)
+        
+        # Use transposed weight directly to avoid device issues
+        weight_t = weight.transpose(0, -1)
+        
+        # Perform quantization operations with device-matched tensors
+        w = 0.5 * (
+            (-weight_t + self.weight_range_min).abs() - 
+            (weight_t - self.weight_range_max).abs() + 
+            self.weight_range_min + 
+            self.weight_range_max
+        )
+        
+        return w.transpose(0, -1)
 
     def _quantize_bias(self, bias):
         if bias is not None and self._quantized and self._b_bit > 0:

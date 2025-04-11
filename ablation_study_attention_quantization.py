@@ -26,7 +26,7 @@ from runners.diffusion import Diffusion, get_beta_schedule
 from datasets import get_dataset, data_transform, inverse_data_transform
 from functions import get_optimizer
 from utils.quant_util import QConv2d
-from models.self_attention import QSelfAttention, EnhancedQSelfAttention
+from models.self_attention import EnhancedQSelfAttention
 
 # Attempt to import CLIP for CLIP score computation if available
 try:
@@ -190,7 +190,7 @@ class AttentionQuantizationAblation:
                     module.output_conv.a_bit = output_bits
             
             # Also handle basic QSelfAttention if present
-            elif isinstance(module, QSelfAttention):
+            elif isinstance(module, EnhancedQSelfAttention):
                 # Set the bit width for all convs in the attention module
                 if hasattr(module, 'query_conv') and isinstance(module.query_conv, QConv2d):
                     module.query_conv.w_bit = query_bits
