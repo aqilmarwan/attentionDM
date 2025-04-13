@@ -5,59 +5,60 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+import sys
 
-# No imports from the main codebase needed
+# Add parent directory to path to access attentionDM modules
+sys.path.append("/workspace/attentionDM")
+
+# Import essential utilities
 from utils import (
     find_attention_layers,
-    apply_quantization, 
+    apply_quantization,
     measure_inference_speed,
     prepare_calibration_data,
     calculate_simple_metrics
 )
 
+# Import necessary modules from attentionDM (adjust paths as needed)
+from model.unet import UNet  # Update with correct path
+from diffusion import GaussianDiffusion  # Update with correct path
+
 def run_attention_quantization_study(args):
-    """Run the attention layer quantization study"""
+    """Run the attention layer quantization study with real model inference"""
     device = torch.device(args.device)
     
-    # Simply load the model checkpoint directly
+    # Load the full checkpoint - properly reconstruct the model
+    print(f"Loading model from {args.model_path}")
     checkpoint = torch.load(args.model_path, map_location=device)
     
-    # Debug: Print what's in the checkpoint
-    print(f"Checkpoint keys: {checkpoint.keys() if isinstance(checkpoint, dict) else 'Not a dictionary'}")
+    # Reconstruct the model based on your attentionDM architecture
+    # This is an example - adjust according to your model's actual structure
+    model = UNet(
+        in_channels=3,
+        out_channels=3,
+        model_channels=128,
+        attention_resolutions=(1, 2, 4),
+        num_res_blocks=2,
+        channel_mult=(1, 2, 3, 4),
+        num_heads=8
+    ).to(device)
     
-    # Skip model class import and work directly with state dict
-    print("Creating a generic model from state dict...")
-    from attention_quant import QuantizedAttention
-
-    # Create a simple wrapper to hold the state dict
-    class ModelWrapper(torch.nn.Module):
-        def __init__(self, state_dict):
-            super().__init__()
-            self.state_dict_data = state_dict
-            
-            # Create parameter placeholders that match the state dict
-            for name, param in state_dict.items():
-                self.register_parameter(name.replace('.', '_'), 
-                                       torch.nn.Parameter(param.clone()))
-            
-            # Find attention-like parameters
-            self.has_attention = any('attn' in k or 'attention' in k for k in state_dict.keys())
-            print(f"Model appears to have attention layers: {self.has_attention}")
-        
-        def forward(self, x):
-            # Placeholder forward function
-            return x
-        
-        def sample(self, batch_size=1):
-            # Simulate generating a sample for testing
-            print("Note: Using simulated sample generation")
-            return torch.randn(batch_size, 3, 32, 32)  # CIFAR-10 sized samples
-
-    # Create wrapper model with the state dict
-    model = ModelWrapper(checkpoint)
-    print("Created wrapper model with parameters from checkpoint")
+    # Load state dict - adjust key naming if needed
+    if 'model' in checkpoint:
+        model.load_state_dict(checkpoint['model'])
+    elif 'state_dict' in checkpoint:
+        model.load_state_dict(checkpoint['state_dict'])
+    else:
+        model.load_state_dict(checkpoint)  # Try direct loading
     
-    # Prepare calibration and evaluation data
+    # Create diffusion model with the loaded UNet
+    diffusion = GaussianDiffusion(
+        model,
+        image_size=32,  # CIFAR-10 size, adjust if needed
+        timesteps=1000   # Adjust based on your model
+    ).to(device)
+    
+    # Prepare calibration data
     calibration_data = prepare_calibration_data(args.calibration_data, args.num_calibration)
     
     # Define bit widths to test
@@ -76,7 +77,22 @@ def run_attention_quantization_study(args):
         print(f"\nTesting {bit_width}-bit quantization:")
         
         # Create a copy of the model for this test
-        model_copy = model.to(device)
+        model_copy = UNet(
+            in_channels=3,
+            out_channels=3,
+            model_channels=128,
+            attention_resolutions=(1, 2, 4),
+            num_res_blocks=2,
+            channel_mult=(1, 2, 3, 4),
+            num_heads=8
+        ).to(device)
+        model_copy.load_state_dict(model.state_dict())
+        
+        diffusion_copy = GaussianDiffusion(
+            model_copy,
+            image_size=32,  # CIFAR-10 size, adjust if needed
+            timesteps=1000  # Adjust based on your model
+        ).to(device)
         
         # Apply quantization
         if bit_width < 32:  # Skip quantization for the baseline
@@ -93,32 +109,30 @@ def run_attention_quantization_study(args):
                 for module in quantized_modules:
                     module.calibrate(calibration_data)
         
-        # Generate samples for evaluation
+        # Generate real samples using the actual diffusion model
         print("Generating samples for evaluation...")
         generated_samples = []
-        for _ in tqdm(range(args.num_eval_samples)):
-            if hasattr(model_copy, 'sample') and callable(model_copy.sample):
-                sample = model_copy.sample(batch_size=1)
-            else:
-                # Just create a dummy sample for testing
-                print("Using synthetic sample for testing")
-                sample = torch.randn(1, 3, 32, 32)  # For CIFAR-10 sized images
-            generated_samples.append(sample)
+        with torch.no_grad():
+            for _ in tqdm(range(args.num_eval_samples)):
+                # Use the actual sampling method from your diffusion model
+                sample = diffusion_copy.sample(batch_size=1)
+                generated_samples.append(sample)
         
-        # Evaluate quality
+        # Evaluate quality using simple metrics
         print("Evaluating quality...")
         metrics = calculate_simple_metrics(generated_samples)
         
         # Measure inference speed
         print("Measuring inference speed...")
         inference_time = measure_inference_speed(
-            model_copy, 
-            (1, 3, 256, 256), 
+            diffusion_copy.sample, 
+            {"batch_size": 1}, 
             num_runs=args.speed_test_runs
         )
         
         # Estimate model size
-        model_size_mb = sum(p.numel() * p.element_size() for p in model_copy.parameters()) / (1024**2)
+        model_size_mb = sum(p.numel() * (bit_width/32 if bit_width < 32 else 1) * p.element_size() 
+                           for p in model_copy.parameters()) / (1024**2)
         
         # Record results
         results['bit_width'].append(bit_width)
@@ -137,10 +151,10 @@ def run_attention_quantization_study(args):
     results_df = pd.DataFrame(results)
     results_df.to_csv(os.path.join(args.output_dir, 'attention_quantization_results.csv'), index=False)
     
-    # Create comprehensive plot
+    # Create comprehensive visualization
     create_comprehensive_plot(results, args.output_dir)
-    
     print(f"Results saved to {args.output_dir}")
+
 
 def create_comprehensive_plot(results, output_dir):
     """Create a comprehensive visualization of quantization results"""
@@ -189,6 +203,9 @@ def create_comprehensive_plot(results, output_dir):
     ax4.set_ylabel('Model Size (MB)', fontsize=12)
     ax4.grid(True, alpha=0.3)
     
+    # Add visualizations of actual generated samples for each bit width
+    # (This would require saving sample images during testing)
+    
     # Bar chart comparing all metrics
     ax5 = plt.subplot(gs[2, :])
     
@@ -212,6 +229,7 @@ def create_comprehensive_plot(results, output_dir):
     ax5.set_xticklabels([str(bw) for bw in results['bit_width']])
     ax5.set_xlabel('Quantization Bit Width', fontsize=12)
     ax5.set_ylabel('Normalized Value', fontsize=12)
+    ax5.axhline(y=1.0, color='gray', linestyle='--', alpha=0.5)  # Reference line
     ax5.legend()
     ax5.grid(True, axis='y', alpha=0.3)
     
@@ -225,6 +243,30 @@ def create_comprehensive_plot(results, output_dir):
     print(f"Comprehensive plot saved to {output_dir}")
     
     plt.close()
+
+
+# Update measure_inference_speed to handle callable with args
+def measure_inference_speed(func, func_args, num_runs=100):
+    """Measure inference speed of a function"""
+    device = next(iter(func.__self__.parameters())).device  # Get device from model
+    
+    # Warmup
+    for _ in range(10):
+        func(**func_args)
+        
+    # Measure
+    torch.cuda.synchronize()
+    start_time = time.time()
+    
+    for _ in range(num_runs):
+        func(**func_args)
+        torch.cuda.synchronize()
+        
+    end_time = time.time()
+    avg_time = (end_time - start_time) / num_runs
+    
+    return avg_time
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Attention Layer Quantization Study")

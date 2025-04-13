@@ -236,9 +236,9 @@ class UpBlock(nn.Module):
             # Project channels to match expected input
             combined = torch.cat([x, skip_x], dim=1)
             if not hasattr(self, 'channel_proj'):
-                self.register_buffer('channel_proj', nn.Conv2d(
+                self.channel_proj = torch.nn.Conv2d(
                     actual_channels, expected_channels, 
-                    kernel_size=1, stride=1, padding=0).to(x.device))
+                    kernel_size=1, stride=1, padding=0).to(x.device)
             x = self.channel_proj(combined)
         else:
             x = torch.cat([x, skip_x], dim=1)
@@ -378,5 +378,28 @@ class Model(nn.Module):
         h = self.norm_out(h)
         h = F.silu(h)
         h = self.conv_out(h)
+        
+        return h
+
+    def apply_arch_weights(self, arch_weights):
+        """Apply architecture weights to different components during forward pass"""
+        self.current_arch_weights = arch_weights
+    
+    def forward_with_weights(self, x, t):
+        """Modified forward pass that applies architecture weights"""
+        # Original timestep embedding
+        t_emb = get_timestep_embedding(t, self.config.model.time_embed_dim)
+        t_emb = t_emb * self.current_arch_weights['timestep_embed']
+        
+        h = x
+        for i, block in enumerate(self.down_blocks):
+            # Apply weights to each resblock
+            weight = self.current_arch_weights['resblocks'][i % len(self.current_arch_weights['resblocks'])]
+            h = h + weight * block(h, t_emb)
+        
+        # Apply weights to attention blocks
+        for i, attn in enumerate(self.middle_attn):
+            weight = self.current_arch_weights['attention'][i % len(self.current_arch_weights['attention'])]
+            h = h + weight * attn(h)
         
         return h
